@@ -3,54 +3,6 @@ using Statistics: mean
 using LinearAlgebra
 
 """
-    accuracy(m, X, Y)
-
-Compute prediction accuracy of labels `Y` for classifier `m` on input `X`.
-
-The labels are expected to be from the set {-1,1}.
-"""
-function accuracy(m, X, Y)
-    Ŷ = sign.(m(X))
-    return mean(Y .== Ŷ)
-end
-
-"""
-    penalty(Φ, X, Y; T=eltype(Φ))
-
-Compute the IRM penalty term for the MSE loss.
-
-The function uses analytically derived formula of the derivative for better numerical
-stability.
-"""
-function penalty(Φ, X, Y; T=eltype(Φ))
-    @assert ndims(X)==2
-    @assert size(X,2) == length(Y)
-    nsamples = size(X,2)
-    Φt = permutedims(Φ)
-    z = Φt*X
-    v = dot(z-Y, z)
-    coefficient = T(2/nsamples)
-    penaltyvalue = (coefficient*v)^2
-    return penaltyvalue
-end
-
-"""
-    makeminibatch(envdatasets, half_mbatchsize, rng)
-
-Sample vector of minibatches from the vector of environment datasets.
-
-The size of each minibatch is `mbatchsize`. Random number generator `rng`
-is used in the process.
-"""
-function makeminibatch(envdatasets, mbatchsize, rng)
-    dataset_batch = map(envdatasets) do dset
-        Ix = rand(rng, 1:size(dset.X,2), mbatchsize)
-        return (X=gpu(dset.X[:,Ix]), Y = gpu(dset.Y[:,Ix]))
-    end
-    return dataset_batch
-end
-
-"""
     irm(envdatasets, niter, λ, η; <keyword arguments>)
 
 Train a linear classifier using the Invariant Risk Minimization [^1] method.
@@ -150,6 +102,57 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
     return cpu_m, cpu_Φ, history
 end
 
+"""
+    accuracy(m, X, Y)
+
+Compute prediction accuracy of labels `Y` for classifier `m` on input `X`.
+
+The labels are expected to be from the set {-1,1}.
+"""
+function accuracy(m, X, Y)
+    Ŷ = sign.(m(X))
+    return mean(Y .== Ŷ)
+end
+
+"""
+    penalty(Φ, X, Y; T=eltype(Φ))
+
+Compute the IRM penalty term for the MSE loss.
+
+The function uses analytically derived formula of the derivative for better numerical
+stability.
+"""
+function penalty(Φ, X, Y; T=eltype(Φ))
+    @assert ndims(X)==2
+    @assert size(X,2) == length(Y)
+    nsamples = size(X,2)
+    Φt = permutedims(Φ)
+    z = Φt*X
+    v = dot(z-Y, z)
+    coefficient = T(2/nsamples)
+    penaltyvalue = (coefficient*v)^2
+    return penaltyvalue
+end
+
+"""
+    makeminibatch(envdatasets, half_mbatchsize, rng)
+
+Sample vector of minibatches from the vector of environment datasets.
+
+The size of each minibatch is `mbatchsize`. Random number generator `rng`
+is used in the process.
+"""
+function makeminibatch(envdatasets, mbatchsize, rng)
+    dataset_batch = map(envdatasets) do dset
+        Ix = rand(rng, 1:size(dset.X,2), mbatchsize)
+        return (X=gpu(dset.X[:,Ix]), Y = gpu(dset.Y[:,Ix]))
+    end
+    return dataset_batch
+end
+
+"""
+Evaluate early stopping objective, save if objective value improved.
+"""
 function early_stop_irm(objective_function, best_objective_value, val_acc, gpuΦ, filename)
     objective_value = objective_function(val_acc)
     if objective_value >= best_objective_value
