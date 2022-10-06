@@ -7,6 +7,9 @@ using LinearAlgebra
 
 Train a linear classifier using the Invariant Risk Minimization [^1] method.
 
+The implementation assumes MSE loss and binary classification with labels
+from the set {-1, 1}. ADAM optimizes is used to update the classifier parameters.
+
 # Arguments
 - `envdatasets`: vector of named tuples with field names `X` and `Y`. Each element
     corresponds to one environment. `X` and `Y` correspond to the input and labels.
@@ -21,15 +24,23 @@ Train a linear classifier using the Invariant Risk Minimization [^1] method.
     of minibatches each of size `mbatchsize` is sampled in each iteration of training.
 - `val_envdatasets=nothing`: used both to pass the validation datasets and enable extended
     logging. If `nothing`, the extended the logging is disabled. Otherwise, the extended
-    logging is enabled and `val_envdatasets` needs to have the same form as `envdatasets`
+    logging is enabled and `val_envdatasets` needs to have the same form as `envdatasets`.
+    The extended logging is performed once per 10 training steps.
 - `initcoeff=1f-1`: standard deviation of the normal distribution used to initialize the
     model parameters.
 - `withbias=false`: if set to `true`, the last feature of the input data is expected to be
     set to 1 in order to allow a classifier with bias.
 - `earlystop=false`: if set to `true`, uses `val_dataset` for early stopping. The
-    val_dataset cannot be `nothing` in this case.
+    val_dataset cannot be `nothing` in this case. The early stopping criterion maximizes
+    the minimal accuracy across environments. The early stopping is evaluated once per
+    10 training steps.
 - `filename_salt=nothing`: used in the temporary file for early stopping to allow for
-    non-conflicting filenames. 
+    non-conflicting filenames.
+
+# Returned values
+- `Φ`: parametric vector of the resulting classifier. The classifier is defined
+    as `m(x)=Φ'*x.
+- `history`: `MVHistory` with values logged during training. 
 
 [^1]: ARJOVSKY, Martin, et al. Invariant risk minimization. arXiv preprint arXiv:1907.02893, 2019.
 """
@@ -43,7 +54,7 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
     
     history = MVHistory()
 
-    if isnothing(mbatchsize) #transfer whole datset to GPU
+    if isnothing(mbatchsize) #full batch training, transfer whole train datset to GPU
         cuda_dataset = map(envdatasets) do dset
             return (X=gpu(dset.X), Y=gpu(dset.Y))
         end
@@ -72,7 +83,7 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
     ps = Flux.params(Φ)
     opt = Flux.Adam(η)
 
-    for iter_ix in 1:niter
+    for iter_ix in 1:niter #training loop
         if isnothing(mbatchsize)
             gs, loss_value = compute_irm_gs_fullbatch(ps, cuda_dataset, lossfun)
         else
@@ -80,7 +91,7 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
         end
         push!(history, :loss, iter_ix, loss_value)
         Flux.update!(opt, ps, gs)
-        if iter_ix%10==0
+        if iter_ix%10==0 #to improve performance, do not perform logging and early stopping each step
             @show iter_ix loss_value
             if !isnothing(val_envdatasets)
                 val_acc = log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, lossfun_with_cu)
@@ -91,15 +102,15 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
         end
     end
 
-    if earlystop
-        cpu_Φ = BSON.load(filename)[:Φ]
+    if earlystop #load early stop result
+        cpu_Φ = BSON.load(filename)[:Φ] #the result is already transfered to cpu
         rm(filename)
     else
+        #if we do not load the early stop result, we need to transfer Φ to cpu
         cpu_Φ = cpu(Φ)
     end
-    cpu_m(x) = cpu_Φ'*x
 
-    return cpu_m, cpu_Φ, history
+    return cpu_Φ, history
 end
 
 """
@@ -164,6 +175,9 @@ function early_stop_irm(objective_function, best_objective_value, val_acc, gpuΦ
     end
 end
 
+"""
+Compute gradient and loss value on the whole training dataset.
+"""
 function compute_irm_gs_fullbatch(ps, cuda_dataset, lossfun)
     gs = gradient(ps) do
         lossfun(cuda_dataset)
@@ -172,6 +186,9 @@ function compute_irm_gs_fullbatch(ps, cuda_dataset, lossfun)
     return gs, loss_value
 end
 
+"""
+Compute gradient and loss value on the minibatch.
+"""
 function compute_irm_gs_minibatch(dataset, mbatchsize, rng, ps, lossfun)
     cuda_batch = makeminibatch(dataset, mbatchsize, rng)
     gs = gradient(ps) do
@@ -184,18 +201,23 @@ end
 function log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, lossfun_with_cu)
     val_loss_value = lossfun_with_cu(val_envdatasets)
     push!(history, :val_loss, iter_ix, val_loss_value)
+
     val_acc = map(val_envdatasets) do dset
         accuracy(m, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_acc, iter_ix, val_acc)
+
     val_penalty = map(val_envdatasets) do dset
         λ*penalty(Φ, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_penalty, iter_ix, val_penalty)
+
     sum_gs = sum(map(p->sum(abs2, gs[p]), ps))
     push!(history, :sum_gs, iter_ix, sum_gs)
+
     sum_Φ = sum(abs2, Φ)
     push!(history, :sum_Phi, iter_ix, sum_Φ)
+    
     return val_acc
 end
 
