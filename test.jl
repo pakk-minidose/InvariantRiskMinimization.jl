@@ -1,5 +1,5 @@
 using Pkg; Pkg.activate(".")
-using Test, BSON, LinearAlgebra, StableRNGs, DataFrames
+using Test, BSON, StableRNGs
 
 @testset "IRM tests" begin
     include("irm.jl")
@@ -40,7 +40,7 @@ using Test, BSON, LinearAlgebra, StableRNGs, DataFrames
         @test all(Φ .≈ [1.4611939f0;1.004548f0]) #test that IRM gives the same results
     end  
     @testset "Validation dataset" begin
-        Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, val_dataset=dataset, initcoeff=1f0)
+        Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, val_envdatasets=dataset, initcoeff=1f0)
         @test all(Φ .≈ [1.4611939f0;1.004548f0]) #test that IRM gives the same results
     end
 end
