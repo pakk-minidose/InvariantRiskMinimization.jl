@@ -32,15 +32,15 @@ using Test, Random, BSON, LinearAlgebra, StableRNGs, DataFrames
         @test all(dataset_batch[2].Y .== -1)
     end
     @testset "Full batch IRM" begin
-        m, Φ, history = irm(dataset, 10, 200, 1e-3, rng=StableRNG(990912203), init_coeff=1f0)
+        m, Φ, history = irm(dataset, 10, 200, 1e-3, rng=StableRNG(990912203), initcoeff=1f0)
         @test all(Φ .≈ [1.4610121f0;1.0043464f0])
     end
     @testset "Minibatch IRM" begin
-        m, Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, init_coeff=1f0)
+        m, Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, initcoeff=1f0)
         @test all(Φ .≈ [1.4611939f0;1.004548f0])
     end  
     @testset "Validation dataset" begin
-        m, Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, val_dataset=dataset, init_coeff=1f0)
+        m, Φ, history = irm(dataset, 10, 100, 1e-3, rng=StableRNG(990912203),mbatchsize=128, val_dataset=dataset, initcoeff=1f0)
         @test all(Φ .≈ [1.4611939f0;1.004548f0])
     end
 end

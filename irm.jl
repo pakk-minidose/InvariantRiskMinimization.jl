@@ -63,27 +63,30 @@ Train a linear classifier using the Invariant Risk Minimization [^1] method.
 - `η`: optimization step size
 
 # Keyword arguments
-- `rng=Xoshiro`: used to pass a random number to the function generator, e.g. in order to obtain
-    reproducible results.
-- `mbatchsize=nothing`: if `nothing`, full batch training is performed. Otherwise a vector of
-    minibatches each of size `mbatchsize` is sampled in each iteration of training.
-- `val_envdatasets=nothing`: used both to pass the validation datasets and enable extended logging.
-    If `nothing`, the extended the logging is disabled. Otherwise, the extended logging
-    is enabled and `val_envdatasets` needs to have the same form as `envdatasets`
-- `init_coeff=1f-1`: standard deviation of the normal distribution used to initialize the model 
-    parameters.
-- `with_bias=false`: if set to `true`, the last feature of the input data is expected to be set to 1
-    in order to allow a classifier with bias.
-- `early_stop=false`: if set to `true`, uses `val_dataset` for early stopping.
+- `rng=Xoshiro`: used to pass a random number to the function generator, e.g. in order to
+    obtain reproducible results.
+- `mbatchsize=nothing`: if `nothing`, full batch training is performed. Otherwise a vector
+    of minibatches each of size `mbatchsize` is sampled in each iteration of training.
+- `val_envdatasets=nothing`: used both to pass the validation datasets and enable extended
+    logging. If `nothing`, the extended the logging is disabled. Otherwise, the extended
+    logging is enabled and `val_envdatasets` needs to have the same form as `envdatasets`
+- `initcoeff=1f-1`: standard deviation of the normal distribution used to initialize the
+    model parameters.
+- `withbias=false`: if set to `true`, the last feature of the input data is expected to be
+    set to 1 in order to allow a classifier with bias.
+- `earlystop=false`: if set to `true`, uses `val_dataset` for early stopping. The
+    val_dataset cannot be `nothing` in this case.
+- `filename_salt=nothing`: used in the temporary file for early stopping to allow for
+    non-conflicting filenames. 
 
 [^1]: ARJOVSKY, Martin, et al. Invariant risk minimization. arXiv preprint arXiv:1907.02893, 2019.
 """
 function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothing,
-    val_envdatasets=nothing, init_coeff=1f-1, with_bias=false,
-    early_stop=false, filename_salt=nothing)
+    val_envdatasets=nothing, initcoeff=1f-1, withbias=false,
+    earlystop=false, filename_salt=nothing)
     
-    if early_stop && (isnothing(val_envdatasets) || isnothing(filename_salt))
-        error("Invalid combination of arguments: early_stop cannot be set to true if val_envdatasets=nothing or filename_salt=nothing")
+    if earlystop && (isnothing(val_envdatasets) || isnothing(filename_salt))
+        error("Invalid combination of arguments: earlystop cannot be set to true if val_envdatasets=nothing or filename_salt=nothing")
     end
     
     history = MVHistory()
@@ -95,7 +98,7 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
     end
 
     indims = size(envdatasets[1].X,1)#assuming each column is an observation
-    Φ = initΦ(indims, with_bias, init_coeff, rng)
+    Φ = initΦ(indims, withbias, initcoeff, rng)
     m(x) = Φ'*x
 
     mse_loss(x, y) = Flux.mse(m(x), y)
@@ -108,7 +111,7 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
         return mse_loss(X, Y) + λ*penalty(Φ, X, Y)
     end
     
-    if early_stop #these variables and functions are needed only if early stopping is enabled
+    if earlystop #these variables and functions are needed only if early stopping is enabled
         objective_function(acc_vector) = minimum(acc_vector)
         best_objective_value = -Inf
         filename = string("irm_autosave_", getpid(), "_", Threads.threadid(), "_", filename_salt, ".bson")
@@ -130,13 +133,13 @@ function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=n
             if !isnothing(val_envdatasets)
                 val_acc = log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, lossfun_with_cu)
             end
-            if early_stop
+            if earlystop
                 best_objective_value = early_stop_irm(objective_function, best_objective_value, val_acc, Φ, filename)
             end
         end
     end
 
-    if early_stop
+    if earlystop
         cpu_Φ = BSON.load(filename)[:Φ]
         rm(filename)
     else
@@ -193,12 +196,12 @@ function log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, 
     return val_acc
 end
 
-function initΦ(indims, with_bias, init_coeff, rng)
-    if with_bias
-        cpuΦ = init_coeff .*randn(rng, Float32, indims)
+function initΦ(indims, withbias, initcoeff, rng)
+    if withbias
+        cpuΦ = initcoeff .*randn(rng, Float32, indims)
         cpuΦ[end] = 0f0 #set bias to zero
         Φ = gpu(cpuΦ)
     else
-        Φ = gpu(init_coeff .*randn(rng, Float32, indims))
+        Φ = gpu(initcoeff .*randn(rng, Float32, indims))
     end
 end
