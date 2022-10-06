@@ -1,4 +1,4 @@
-using Flux, ValueHistories, Random, CUDA, BSON
+using Flux, ValueHistories, Random, BSON
 using Statistics: mean
 using LinearAlgebra
 
@@ -36,7 +36,7 @@ end
 function make_minibatch(dataset, mbatchsize, rng)
     dataset_batch = map(dataset) do dset
         Ix = rand(rng, 1:size(dset.X,2), mbatchsize)
-        return (X=cu(dset.X[:,Ix]), Y = cu(dset.Y[:,Ix]))
+        return (X=gpu(dset.X[:,Ix]), Y = gpu(dset.Y[:,Ix]))
     end
     return dataset_batch
 end
@@ -50,7 +50,7 @@ function irm(dataset, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothi
 
     if isnothing(mbatchsize) #transfer whole datset to GPU
         cuda_dataset = map(dataset) do dset
-            return (X=cu(dset.X), Y=cu(dset.Y))
+            return (X=gpu(dset.X), Y=gpu(dset.Y))
         end
     end
 
@@ -63,8 +63,8 @@ function irm(dataset, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothi
         mse_loss(dset.X, dset.Y) + λ*penalty(Φ, dset.X, dset.Y)
     end
     lossfun_with_cu(_dataset) = sum(_dataset) do dset
-        X = cu(dset.X)
-        Y = cu(dset.Y)
+        X = gpu(dset.X)
+        Y = gpu(dset.Y)
         return mse_loss(X, Y) + λ*penalty(Φ, X, Y)
     end
     
@@ -139,11 +139,11 @@ function log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_dataset, loss
     val_loss_value = lossfun_with_cu(val_dataset)
     push!(history, :val_loss, iter_ix, val_loss_value)
     val_acc = map(val_dataset) do dset
-        accuracy(m, cu(dset.X), cu(dset.Y))
+        accuracy(m, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_acc, iter_ix, val_acc)
     val_penalty = map(val_dataset) do dset
-        λ*penalty(Φ, cu(dset.X), cu(dset.Y))
+        λ*penalty(Φ, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_penalty, iter_ix, val_penalty)
     sum_gs = sum(map(p->sum(abs2, gs[p]), ps))
@@ -157,8 +157,8 @@ function initΦ(indims, with_bias, init_coeff, rng)
     if with_bias
         cpuΦ = init_coeff .*randn(rng, Float32, indims)
         cpuΦ[end] = 0f0 #set bias to zero
-        Φ = cu(cpuΦ)
+        Φ = gpu(cpuΦ)
     else
-        Φ = cu(init_coeff .*randn(rng, Float32, indims))
+        Φ = gpu(init_coeff .*randn(rng, Float32, indims))
     end
 end
