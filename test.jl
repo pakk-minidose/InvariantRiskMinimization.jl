@@ -20,12 +20,12 @@ using Test, Random, BSON, LinearAlgebra, StableRNGs, DataFrames
     dataset = BSON.load("./test/testdataset.bson")[:dataset]
     @testset "makeMinibatch" begin
         mbatchsize = 128
-        dataset_batch = make_minibatch(dataset, mbatchsize, StableRNG(814299091))
+        dataset_batch = makeminibatch(dataset, mbatchsize, StableRNG(814299091))
         @test length(dataset_batch) == 2
         @test size(dataset_batch[1].X) == (2, mbatchsize)
         @test size(dataset_batch[1].Y) == (1, mbatchsize)
         trivial_dataset = [(X=ones(2,1000), Y=2*ones(1,1000));(X=zeros(2,1000),Y=-1*ones(1,1000))]
-        dataset_batch = make_minibatch(trivial_dataset, mbatchsize, StableRNG(144090918))
+        dataset_batch = makeminibatch(trivial_dataset, mbatchsize, StableRNG(144090918))
         @test all(dataset_batch[1].X .== 1)
         @test all(dataset_batch[1].Y .== 2)
         @test all(dataset_batch[2].X .== 0)

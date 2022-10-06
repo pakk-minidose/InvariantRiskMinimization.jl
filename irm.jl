@@ -19,7 +19,8 @@ end
 
 Compute the IRM penalty term for the MSE loss.
 
-The function uses analytically derived formula of the derivative for better numerical stability.
+The function uses analytically derived formula of the derivative for better numerical
+stability.
 """
 function penalty(Φ, X, Y; T=eltype(Φ))
     @assert ndims(X)==2
@@ -29,32 +30,71 @@ function penalty(Φ, X, Y; T=eltype(Φ))
     z = Φt*X
     v = dot(z-Y, z)
     coefficient = T(2/nsamples)
-    penalty_value = (coefficient*v)^2
-    return penalty_value
+    penaltyvalue = (coefficient*v)^2
+    return penaltyvalue
 end
 
-function make_minibatch(dataset, mbatchsize, rng)
-    dataset_batch = map(dataset) do dset
+"""
+    makeminibatch(envdatasets, half_mbatchsize, rng)
+
+Sample vector of minibatches from the vector of environment datasets.
+
+The size of each minibatch is `mbatchsize`. Random number generator `rng`
+is used in the process.
+"""
+function makeminibatch(envdatasets, mbatchsize, rng)
+    dataset_batch = map(envdatasets) do dset
         Ix = rand(rng, 1:size(dset.X,2), mbatchsize)
         return (X=gpu(dset.X[:,Ix]), Y = gpu(dset.Y[:,Ix]))
     end
     return dataset_batch
 end
 
-function irm(dataset, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothing, val_dataset=nothing, init_coeff=1f-1, with_bias=false, early_stop=false, filename_salt=nothing)
-    if early_stop && (isnothing(val_dataset) || isnothing(filename_salt))
-        error("Invalid combination of arguments: early_stop cannot be set to true if val_dataset=nothing or filename_salt=nothing")
+"""
+    irm(envdatasets, niter, λ, η; <keyword arguments>)
+
+Train a linear classifier using the Invariant Risk Minimization [^1] method.
+
+# Arguments
+- `envdatasets`: vector of named tuples with field names `X` and `Y`. Each element
+    corresponds to one environment. `X` and `Y` correspond to the input and labels.
+- `niter`: number of iterations of the optimization.
+- `λ`: multiplies the value of the penalty term in the loss function
+- `η`: optimization step size
+
+# Keyword arguments
+- `rng=Xoshiro`: used to pass a random number to the function generator, e.g. in order to obtain
+    reproducible results.
+- `mbatchsize=nothing`: if `nothing`, full batch training is performed. Otherwise a vector of
+    minibatches each of size `mbatchsize` is sampled in each iteration of training.
+- `val_envdatasets=nothing`: used both to pass the validation datasets and enable extended logging.
+    If `nothing`, the extended the logging is disabled. Otherwise, the extended logging
+    is enabled and `val_envdatasets` needs to have the same form as `envdatasets`
+- `init_coeff=1f-1`: standard deviation of the normal distribution used to initialize the model 
+    parameters.
+- `with_bias=false`: if set to `true`, the last feature of the input data is expected to be set to 1
+    in order to allow a classifier with bias.
+- `early_stop=false`: if set to `true`, uses `val_dataset` for early stopping.
+
+[^1]: ARJOVSKY, Martin, et al. Invariant risk minimization. arXiv preprint arXiv:1907.02893, 2019.
+"""
+function irm(envdatasets, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothing,
+    val_envdatasets=nothing, init_coeff=1f-1, with_bias=false,
+    early_stop=false, filename_salt=nothing)
+    
+    if early_stop && (isnothing(val_envdatasets) || isnothing(filename_salt))
+        error("Invalid combination of arguments: early_stop cannot be set to true if val_envdatasets=nothing or filename_salt=nothing")
     end
     
     history = MVHistory()
 
     if isnothing(mbatchsize) #transfer whole datset to GPU
-        cuda_dataset = map(dataset) do dset
+        cuda_dataset = map(envdatasets) do dset
             return (X=gpu(dset.X), Y=gpu(dset.Y))
         end
     end
 
-    indims = size(dataset[1].X,1)#assuming each column is an observation
+    indims = size(envdatasets[1].X,1)#assuming each column is an observation
     Φ = initΦ(indims, with_bias, init_coeff, rng)
     m(x) = Φ'*x
 
@@ -81,14 +121,14 @@ function irm(dataset, niter, λ, η; rng=Xoshiro(rand(UInt32)), mbatchsize=nothi
         if isnothing(mbatchsize)
             gs, loss_value = compute_irm_gs_fullbatch(ps, cuda_dataset, lossfun)
         else
-            gs, loss_value = compute_irm_gs_minibatch(dataset, mbatchsize, rng, ps, lossfun)
+            gs, loss_value = compute_irm_gs_minibatch(envdatasets, mbatchsize, rng, ps, lossfun)
         end
         push!(history, :loss, iter_ix, loss_value)
         Flux.update!(opt, ps, gs)
         if iter_ix%10==0
             @show iter_ix loss_value
-            if !isnothing(val_dataset)
-                val_acc = log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_dataset, lossfun_with_cu)
+            if !isnothing(val_envdatasets)
+                val_acc = log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, lossfun_with_cu)
             end
             if early_stop
                 best_objective_value = early_stop_irm(objective_function, best_objective_value, val_acc, Φ, filename)
@@ -127,7 +167,7 @@ function compute_irm_gs_fullbatch(ps, cuda_dataset, lossfun)
 end
 
 function compute_irm_gs_minibatch(dataset, mbatchsize, rng, ps, lossfun)
-    cuda_batch = make_minibatch(dataset, mbatchsize, rng)
+    cuda_batch = makeminibatch(dataset, mbatchsize, rng)
     gs = gradient(ps) do
         lossfun(cuda_batch)
     end
@@ -135,14 +175,14 @@ function compute_irm_gs_minibatch(dataset, mbatchsize, rng, ps, lossfun)
     return gs, loss_value
 end
 
-function log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_dataset, lossfun_with_cu)
-    val_loss_value = lossfun_with_cu(val_dataset)
+function log_irm_history!(history, iter_ix, Φ, m, λ, gs, ps, val_envdatasets, lossfun_with_cu)
+    val_loss_value = lossfun_with_cu(val_envdatasets)
     push!(history, :val_loss, iter_ix, val_loss_value)
-    val_acc = map(val_dataset) do dset
+    val_acc = map(val_envdatasets) do dset
         accuracy(m, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_acc, iter_ix, val_acc)
-    val_penalty = map(val_dataset) do dset
+    val_penalty = map(val_envdatasets) do dset
         λ*penalty(Φ, gpu(dset.X), gpu(dset.Y))
     end
     push!(history, :val_penalty, iter_ix, val_penalty)
