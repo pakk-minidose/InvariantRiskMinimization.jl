@@ -39,7 +39,7 @@ from the set {-1, 1}. ADAM optimizes is used to update the classifier parameters
 
 # Returned values
 - `Φ`: parametric vector of the resulting classifier. The classifier is defined
-    as `m(x)=Φ'*x.
+    as `m(x)=Φ'*x`.
 - `history`: `MVHistory` with values logged during training. 
 
 [^1]: ARJOVSKY, Martin, et al. Invariant risk minimization. arXiv preprint arXiv:1907.02893, 2019.
